@@ -11,6 +11,7 @@ class SearchResults:
     documents: List[str]
     metadata: List[Dict[str, Any]]
     distances: List[float]
+    lesson_links: List[Optional[str]] = None
     error: Optional[str] = None
     
     @classmethod
@@ -19,13 +20,14 @@ class SearchResults:
         return cls(
             documents=chroma_results['documents'][0] if chroma_results['documents'] else [],
             metadata=chroma_results['metadatas'][0] if chroma_results['metadatas'] else [],
-            distances=chroma_results['distances'][0] if chroma_results['distances'] else []
+            distances=chroma_results['distances'][0] if chroma_results['distances'] else [],
+            lesson_links=[]
         )
     
     @classmethod
     def empty(cls, error_msg: str) -> 'SearchResults':
         """Create empty results with error message"""
-        return cls(documents=[], metadata=[], distances=[], error=error_msg)
+        return cls(documents=[], metadata=[], distances=[], lesson_links=[], error=error_msg)
     
     def is_empty(self) -> bool:
         """Check if results are empty"""
@@ -95,7 +97,12 @@ class VectorStore:
                 n_results=search_limit,
                 where=filter_dict
             )
-            return SearchResults.from_chroma(results)
+            search_results = SearchResults.from_chroma(results)
+            
+            # Enrich results with lesson links
+            search_results.lesson_links = self._get_lesson_links_for_results(search_results.metadata)
+            
+            return search_results
         except Exception as e:
             return SearchResults.empty(f"Search error: {str(e)}")
     
@@ -131,6 +138,22 @@ class VectorStore:
             return {"course_title": course_title}
             
         return {"lesson_number": lesson_number}
+    
+    def _get_lesson_links_for_results(self, metadata_list: List[Dict[str, Any]]) -> List[Optional[str]]:
+        """Get lesson links for search results metadata"""
+        lesson_links = []
+        
+        for metadata in metadata_list:
+            course_title = metadata.get('course_title')
+            lesson_number = metadata.get('lesson_number')
+            
+            if course_title and lesson_number is not None:
+                lesson_link = self.get_lesson_link(course_title, lesson_number)
+                lesson_links.append(lesson_link)
+            else:
+                lesson_links.append(None)
+        
+        return lesson_links
     
     def add_course_metadata(self, course: Course):
         """Add course information to the catalog for semantic search"""
