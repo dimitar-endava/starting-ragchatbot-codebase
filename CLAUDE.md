@@ -19,6 +19,15 @@ cd backend && uv run uvicorn app:app --reload --port 8000
 uv sync
 ```
 
+**Code Quality Tools:**
+```bash
+./scripts/format.sh    # Format code with Black and organize imports with isort
+./scripts/lint.sh      # Run all quality checks (Black, isort, flake8)
+uv run black backend/  # Format code with Black only
+uv run isort backend/  # Organize imports with isort only
+uv run flake8 backend/ # Run flake8 linting only
+```
+
 **Environment setup:**
 - Copy `.env.example` to `.env`
 - Set `ANTHROPIC_API_KEY` in `.env`
@@ -102,7 +111,8 @@ All settings centralized in `config.py`:
 - **Smart search**: Course name matching supports partial matches (e.g., "MCP" finds "MCP Introduction")
 - **Source tracking**: Search tools track citations through the tool execution chain
 - **Error handling**: Graceful degradation at each layer with user-friendly messages
-- **No tests**: This codebase has no test framework or lint configuration
+- **Code Quality**: This codebase uses Black for formatting, isort for import organization, and flake8 for linting
+- **Development workflow**: Always run `./scripts/lint.sh` before committing to ensure code quality
 - always use uv do never use pip directly
 - make sure to use uv for managing all the dependencies
 - use uv to run all python files
