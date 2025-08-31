@@ -241,14 +241,14 @@ class TestAIGenerator:
         query = "Test query"
         
         # Mock API error
-        with patch('anthropic.APIError') as mock_api_error:
-            api_error = Exception("API key invalid")
-            mock_api_error.return_value = api_error
-            self.mock_client.messages.create.side_effect = api_error
-            
-            # Act & Assert
-            with pytest.raises(Exception, match="API key invalid"):
-                self.ai_generator.generate_response(query)
+        api_error = Exception("API key invalid")
+        self.mock_client.messages.create.side_effect = api_error
+        
+        # Act
+        result = self.ai_generator.generate_response(query)
+        
+        # Assert - should return error message instead of raising
+        assert "I encountered an error: API key invalid" in result
     
     def test_handle_tool_execution_message_building(self):
         """Test that tool execution builds messages correctly"""
@@ -306,8 +306,205 @@ class TestAIGenerator:
         assert "search_course_content" in system_prompt
         assert "get_course_outline" in system_prompt
         assert "Course-specific content questions" in system_prompt
-        assert "One tool call per query maximum" in system_prompt
+        assert "Sequential tool usage" in system_prompt
+        assert "When to use multiple tools" in system_prompt
         assert "Brief, Concise and focused" in system_prompt
+
+    def test_sequential_tool_calling_two_rounds(self):
+        """Test successful sequential tool calling with 2 rounds"""
+        # Arrange
+        query = "Search for lesson 4 of MCP course, then find another course with similar content"
+        tools = [{"name": "get_course_outline", "description": "Get outline"}, 
+                 {"name": "search_course_content", "description": "Search content"}]
+        
+        mock_tool_manager = Mock()
+        mock_tool_manager.execute_tool.side_effect = [
+            "MCP Introduction - Lesson 4: Server Implementation",  # First tool call
+            "Found Python Web Dev course with server implementation content"  # Second tool call
+        ]
+        
+        # Mock responses for 2 rounds
+        # Round 1: Tool use response
+        mock_round1_response = Mock()
+        mock_round1_response.stop_reason = "tool_use"
+        mock_tool_content1 = Mock()
+        mock_tool_content1.type = "tool_use"
+        mock_tool_content1.name = "get_course_outline"
+        mock_tool_content1.input = {"course_name": "MCP"}
+        mock_tool_content1.id = "tool1"
+        mock_round1_response.content = [mock_tool_content1]
+        
+        # Round 2: Tool use response
+        mock_round2_response = Mock()
+        mock_round2_response.stop_reason = "tool_use"
+        mock_tool_content2 = Mock()
+        mock_tool_content2.type = "tool_use"
+        mock_tool_content2.name = "search_course_content"
+        mock_tool_content2.input = {"query": "server implementation"}
+        mock_tool_content2.id = "tool2"
+        mock_round2_response.content = [mock_tool_content2]
+        
+        # Final response after 2 rounds
+        mock_final_response = Mock()
+        mock_final_response.content = [Mock(text="Based on the research, lesson 4 covers server implementation...")]
+        
+        self.mock_client.messages.create.side_effect = [
+            mock_round1_response, mock_round2_response, mock_final_response
+        ]
+        
+        # Act
+        result = self.ai_generator.generate_response(query, tools=tools, tool_manager=mock_tool_manager)
+        
+        # Assert
+        assert result == "Based on the research, lesson 4 covers server implementation..."
+        assert mock_tool_manager.execute_tool.call_count == 2
+        assert self.mock_client.messages.create.call_count == 3  # 2 rounds + final
+
+    def test_sequential_tool_calling_early_termination(self):
+        """Test sequential tool calling that terminates after first round (no more tools)"""
+        # Arrange
+        query = "What is Python?"
+        tools = [{"name": "search_course_content", "description": "Search content"}]
+        
+        mock_tool_manager = Mock()
+        mock_tool_manager.execute_tool.return_value = "Python programming content"
+        
+        # Round 1: Tool use response
+        mock_round1_response = Mock()
+        mock_round1_response.stop_reason = "tool_use"
+        mock_tool_content = Mock()
+        mock_tool_content.type = "tool_use"
+        mock_tool_content.name = "search_course_content"
+        mock_tool_content.input = {"query": "Python"}
+        mock_tool_content.id = "tool1"
+        mock_round1_response.content = [mock_tool_content]
+        
+        # Round 2: Direct response (no tools)
+        mock_round2_response = Mock()
+        mock_round2_response.stop_reason = "end_turn"
+        mock_round2_response.content = [Mock(text="Python is a programming language...")]
+        
+        self.mock_client.messages.create.side_effect = [mock_round1_response, mock_round2_response]
+        
+        # Act
+        result = self.ai_generator.generate_response(query, tools=tools, tool_manager=mock_tool_manager)
+        
+        # Assert
+        assert result == "Python is a programming language..."
+        assert mock_tool_manager.execute_tool.call_count == 1
+        assert self.mock_client.messages.create.call_count == 2  # 2 API calls total
+
+    def test_sequential_tool_calling_max_rounds_reached(self):
+        """Test that sequential calling stops after max rounds"""
+        # Arrange
+        query = "Complex multi-step query"
+        tools = [{"name": "search_course_content", "description": "Search content"}]
+        
+        mock_tool_manager = Mock()
+        mock_tool_manager.execute_tool.return_value = "Some search result"
+        
+        # Both rounds return tool use
+        mock_tool_response = Mock()
+        mock_tool_response.stop_reason = "tool_use"
+        mock_tool_content = Mock()
+        mock_tool_content.type = "tool_use"
+        mock_tool_content.name = "search_course_content"
+        mock_tool_content.input = {"query": "test"}
+        mock_tool_content.id = "tool_id"
+        mock_tool_response.content = [mock_tool_content]
+        
+        # Final response after max rounds
+        mock_final_response = Mock()
+        mock_final_response.content = [Mock(text="Final answer after max rounds")]
+        
+        self.mock_client.messages.create.side_effect = [
+            mock_tool_response,  # Round 1
+            mock_tool_response,  # Round 2  
+            mock_final_response  # Final call
+        ]
+        
+        # Act
+        result = self.ai_generator.generate_response(query, tools=tools, tool_manager=mock_tool_manager, max_rounds=2)
+        
+        # Assert
+        assert result == "Final answer after max rounds"
+        assert mock_tool_manager.execute_tool.call_count == 2  # Max 2 rounds
+        assert self.mock_client.messages.create.call_count == 3  # 2 rounds + final
+
+    def test_sequential_tool_calling_tool_failure(self):
+        """Test handling of tool execution failure in sequential rounds"""
+        # Arrange
+        query = "Search query"
+        tools = [{"name": "search_course_content", "description": "Search content"}]
+        
+        mock_tool_manager = Mock()
+        mock_tool_manager.execute_tool.side_effect = Exception("Tool failed")
+        
+        # Round 1: Tool use response
+        mock_round1_response = Mock()
+        mock_round1_response.stop_reason = "tool_use"
+        mock_tool_content = Mock()
+        mock_tool_content.type = "tool_use"
+        mock_tool_content.name = "search_course_content"
+        mock_tool_content.input = {"query": "test"}
+        mock_tool_content.id = "tool1"
+        mock_round1_response.content = [mock_tool_content]
+        
+        # Final response after tool failure
+        mock_final_response = Mock()
+        mock_final_response.content = [Mock(text="I encountered some issues but here's what I can tell you...")]
+        
+        self.mock_client.messages.create.side_effect = [mock_round1_response, mock_final_response]
+        
+        # Act
+        result = self.ai_generator.generate_response(query, tools=tools, tool_manager=mock_tool_manager)
+        
+        # Assert
+        assert "I encountered some issues" in result
+        assert mock_tool_manager.execute_tool.call_count == 1
+        assert self.mock_client.messages.create.call_count == 2  # Round 1 + final
+
+    def test_sequential_message_building(self):
+        """Test that message history is built correctly across rounds"""
+        # Arrange
+        query = "Test query"
+        tools = [{"name": "search_course_content", "description": "Search content"}]
+        
+        mock_tool_manager = Mock()
+        mock_tool_manager.execute_tool.return_value = "Search result"
+        
+        # Round 1 tool response
+        mock_round1_response = Mock()
+        mock_round1_response.stop_reason = "tool_use"
+        mock_tool_content = Mock()
+        mock_tool_content.type = "tool_use"
+        mock_tool_content.name = "search_course_content"
+        mock_tool_content.input = {"query": "test"}
+        mock_tool_content.id = "tool1"
+        mock_round1_response.content = [mock_tool_content]
+        
+        # Round 2 direct response
+        mock_round2_response = Mock()
+        mock_round2_response.stop_reason = "end_turn"
+        mock_round2_response.content = [Mock(text="Final answer")]
+        
+        self.mock_client.messages.create.side_effect = [mock_round1_response, mock_round2_response]
+        
+        # Act
+        result = self.ai_generator.generate_response(query, tools=tools, tool_manager=mock_tool_manager)
+        
+        # Assert
+        assert result == "Final answer"
+        
+        # Check message building in round 2
+        round2_call_args = self.mock_client.messages.create.call_args_list[1][1]
+        messages = round2_call_args["messages"]
+        
+        # Should have: initial user, assistant tool use, user tool results
+        assert len(messages) == 3
+        assert messages[0]["role"] == "user"
+        assert messages[1]["role"] == "assistant"  
+        assert messages[2]["role"] == "user"
 
 
 class TestAIGeneratorIntegration:
