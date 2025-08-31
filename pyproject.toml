@@ -18,4 +18,20 @@ dependencies = [
 dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.1.0",
+    "httpx>=0.24.0",
 ]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["backend/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests", 
+    "api: API endpoint tests",
+    "slow: Tests that take a long time to run"
+]
+asyncio_mode = "auto"
